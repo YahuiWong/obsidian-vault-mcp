@@ -6,7 +6,7 @@ on:
     inputs:
       version:
         description: 'New version or major, minor, patch'
-        default: 'patch'
+        default: '1.3.0'
         required: true
       update_manifest:
         description: 'Update manifest.json'
@@ -38,7 +38,7 @@ jobs:
       # zizmor: ignore[artipacked]
       with:
         fetch-depth: 0 # otherwise, you will failed to push refs to dest repo
-        submodules: true
+        submodules: false
 
     - name: Use Node.js
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -50,6 +50,19 @@ jobs:
       run: |
         git config user.name "$GH_BOT_NAME"
         git config user.email "$GH_BOT_EMAIL"
+
+    - name: Initialize bridge submodule from current repository
+      if: github.ref == 'refs/heads/main'
+      run: |
+        ORIGIN_URL="https://github.com/${GITHUB_REPOSITORY}.git"
+        AUTH_HEADER=$(git config --get http.https://github.com/.extraheader || true)
+        git config submodule.bridge.url "$ORIGIN_URL"
+        if [ -n "$AUTH_HEADER" ]; then
+          git -c "http.https://github.com/.extraheader=$AUTH_HEADER" submodule update --init bridge
+          git -C bridge config http.https://github.com/.extraheader "$AUTH_HEADER"
+        else
+          git submodule update --init bridge
+        fi
 
     # 1) Build main: sets the version and populates build/.
     # Nothing is committed, tagged, or pushed until every build and
@@ -68,7 +81,7 @@ jobs:
 
         npm ci
         # Runs the preversion hook, which builds the plugin into build/
-        npm version "$INPUT_VERSION" --no-git-tag-version
+        npm version "$INPUT_VERSION" --no-git-tag-version --allow-same-version
         VERSION=$(grep '^  "version"' package.json | cut -d'"' -f4)
         echo "$VERSION"
 
@@ -122,7 +135,9 @@ jobs:
       run: |
         git add .
         git status
-        git commit -m "🔖 $RELEASE_VERSION"
+        if ! git diff --cached --quiet; then
+          git commit -m "🔖 $RELEASE_VERSION"
+        fi
         git tag "$RELEASE_VERSION"
         # Push the commit and its tag together, naming both refs so no
         # other local tags come along for the ride.
